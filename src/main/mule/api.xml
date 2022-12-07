@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd ">
+    <http:listener-config name="mule-poc-1-httpListenerConfig">
+        <http:listener-connection host="0.0.0.0" port="8081" />
+    </http:listener-config>
+    <apikit:config name="mule-poc-1-config" api="resource::d170e264-e346-48e6-8849-678648c893a2:mule-poc-1:1.0.0:raml:zip:mule-poc-1.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
+    <flow name="mule-poc-1-main">
+        <http:listener config-ref="mule-poc-1-httpListenerConfig" path="/api/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:router config-ref="mule-poc-1-config" />
+    </flow>
+    <flow name="mule-poc-1-console">
+        <http:listener config-ref="mule-poc-1-httpListenerConfig" path="/console/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:console config-ref="mule-poc-1-config" />
+        <error-handler>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{message: "Resource not found"}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">404</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+    <flow name="get:\orders:mule-poc-1-config">
+        <logger level="INFO" doc:name="Get_Logs" doc:id="d12fef02-dfc9-416a-8bc4-71bfef0f6467" message="Get Method Provoked"/>
+		<ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var time = (now() >> "IST") as String {format:"a"}
+var date = (now() >> "IST") as String {format:"dd-mm-yyyy hh:mm"}
+---
+
+{
+  uniqueId: attributes.headers.venderName ++ " - " ++ uuid(),
+  currentDate: date ++ time,
+  status: "Success",
+}
+]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+    <flow name="post:\orders:application\json:mule-poc-1-config">
+        <logger level="INFO" doc:name="Post_Logs" doc:id="3931188a-715e-43a0-ba20-98a42fc3d631" message="Post Method Invoked and Orders Updated"/>
+		<set-variable value="#[payload]" doc:name="originalPayload" doc:id="3933020e-08f9-44a8-bf47-9270faa3e8c4" variableName="originalPayload"/>
+		<foreach doc:name="For Each" doc:id="fb03671c-ee2e-4de1-a7d4-43ab696c2cae" collection="#[payload.records.contactNo]">
+			<choice doc:name="Choice" doc:id="da443957-1fe9-4f38-8455-975b57ee7148">
+			<when expression="#[sizeOf(payload) != 10]">
+					<raise-error doc:name="Raise error" doc:id="56f77994-212c-4de6-b742-485b84e98d42" type="ANY" description="Mobile number is invalid"/>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" doc:id="dda3311b-6527-416a-bce6-baa086fac1b7" message="#[payload]" />
+			</otherwise>
+		</choice>
+		</foreach>
+		<ee:transform doc:id="d5186d4f-0c0b-476e-915d-997f3a98e4e7">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/xml
+---
+{
+	orders: {
+		(payload.records map ( record , indexOfRecord ) -> {
+			invoices: {
+				"order-id": payload.orderId,
+				"user-name": upper(record.name),
+				"phone-number": "+91 " ++ record.contactNo,
+				mail: record.emailId
+			}
+		})
+	}
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="11a01074-ff0b-446b-87ad-7a5c1be784c9" >
+				<ee:transform doc:name="Transform Message" doc:id="db3e26df-3c7e-4a54-9e58-b44c6ded1dce" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"errorMessage" : error.description,
+	"status" : "Failed"
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</on-error-propagate>
+		</error-handler>
+    </flow>
+</mule>
